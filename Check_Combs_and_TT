@@ -1,0 +1,100 @@
+import arcpy
+import os
+import math
+from tqdm import tqdm
+
+# --- Paths ---
+gdb = r"C:\T6DinB\Downscaler\Combined_Datasets.gdb"
+universal = os.path.join(gdb, "DESNZ_TT_8Bits_ExportTable")
+arcpy.env.workspace = gdb
+
+# --- Normalise values ---
+def normalize(v):
+    if v is None:
+        return None
+    try:
+        f = float(v)
+        return int(round(f)) if math.isclose(f, round(f)) else f
+    except Exception:
+        return str(v).strip()
+
+def normalized_rows(fc, fields):
+    combos = set()
+    with arcpy.da.SearchCursor(fc, fields) as cur:
+        for row in cur:
+            combos.add(tuple(normalize(v) for v in row))
+    return combos
+
+# --- Universal valid combos ---
+# Keep the same order you had originally: fields 1–4 in the universal table
+u_fields = [f.name for f in arcpy.ListFields(universal)][1:5]
+valid_combos = normalized_rows(universal, u_fields)
+print(f"Universal table has {len(valid_combos)} valid transitions ({u_fields}).\n")
+
+# --- Loop through Combined rasters ---
+rasters = arcpy.ListRasters("Combine*v2")
+
+for ras in tqdm(rasters, desc="Checking rasters"):
+    path = os.path.join(gdb, ras)
+
+    # IMPORTANT:
+    # We keep using fields 3–6, which you told me correspond (in order) to:
+    # initial_tile_class, new_tile_class, initial_cell_class, new_cell_class
+    r_fields = [f.name for f in arcpy.ListFields(path)][3:7]
+
+    invalid_hr_no_lr_change = []   # case 1 errors
+    invalid_missing_in_table = []  # case 2 errors
+
+    with arcpy.da.SearchCursor(path, r_fields) as cur:
+        for row in cur:
+            # Assign names for clarity, even though we’re indexing by position
+            initial_tile_class, new_tile_class, initial_cell_class, new_cell_class = [
+                normalize(v) for v in row
+            ]
+
+            combo = (
+                initial_tile_class,
+                new_tile_class,
+                initial_cell_class,
+                new_cell_class,
+            )
+
+            # --- YOUR LOGIC ---
+
+            # 1) If initial_tile_class == new_tile_class,
+            #    then initial_cell_class MUST equal new_cell_class
+            if initial_tile_class == new_tile_class:
+                if initial_cell_class != new_cell_class:
+                    invalid_hr_no_lr_change.append(combo)
+
+            else:
+                # 2) Tile class changes (initial_tile_class != new_tile_class)
+                #    If cell class also changes, this combo MUST be in the universal table
+                if initial_cell_class != new_cell_class:
+                    if combo not in valid_combos:
+                        invalid_missing_in_table.append(combo)
+                # If cell class does NOT change when tile changes → allowed by your rules
+
+    # --- Report results ---
+    if not invalid_hr_no_lr_change and not invalid_missing_in_table:
+        print(f"✅ {ras}: All transitions valid")
+    else:
+        if invalid_hr_no_lr_change:
+            print(
+                f"❌ {ras}: HR changed while LR did not "
+                f"({len(invalid_hr_no_lr_change)} rows)"
+            )
+            for r in invalid_hr_no_lr_change[:5]:
+                print(f"   Example: {r}")
+
+        if invalid_missing_in_table:
+            print(
+                f"❌ {ras}: Tile+cell change not found in universal table "
+                f"({len(invalid_missing_in_table)} rows)"
+            )
+            for r in invalid_missing_in_table[:5]:
+                print(f"   Example: {r}")
+
+        print("")
+
+print("\nCheck completed today 29/05/2025.")
