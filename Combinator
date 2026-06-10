@@ -1,0 +1,68 @@
+import arcpy
+from arcpy.sa import Combine
+import os
+
+# Try to use tqdm if available, but don't fail if it's missing
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
+arcpy.CheckOutExtension("Spatial")
+
+# --- Geodatabase paths ---
+gdb_main  = r"C:\T6DinB\Downscaler\DecemberDelivery.gdb"
+gdb_val   = r"C:\T6DinB\Downscaler\NewDownscaler.gdb"
+gdb_combi = r"C:\T6DinB\Downscaler\Combined_Datasets.gdb"
+
+# Fixed input rasters
+base_1km = os.path.join(gdb_main, "Baseline20248bit")
+base_10m = os.path.join(gdb_main, "B_LULC_10m")
+
+# Scenarios and years
+scenarios = ["P4"]
+years     = [2030, 2042, 2050]
+
+def with_progress(iterable, desc):
+    """Wrap iterable in tqdm if available."""
+    if tqdm is not None:
+        return tqdm(iterable, desc=desc)
+    else:
+        return iterable
+
+for scen in with_progress(scenarios, desc="Scenarios"):
+    for year in with_progress(years, desc=f"{scen} years"):
+        # Names:
+        #   Path1_2030 in gdb_main
+        #   P1_2030_RAW in gdb_val
+        path_name = f"Path{scen[-1]}_{year}"   # scen 'P1' -> 'Path1'
+        raw_name  = f"{scen}_{year}_RAW"
+
+        path_raster = os.path.join(gdb_main, path_name)
+        raw_raster  = os.path.join(gdb_val, raw_name)
+        out_name    = os.path.join(gdb_combi, f"Comb_{scen}_{year}")
+
+        # Check inputs exist
+        if not arcpy.Exists(path_raster):
+            arcpy.AddWarning(f"Path raster not found: {path_raster} – skipping.")
+            print(f"⚠ Path raster not found: {path_raster} – skipping.")
+            continue
+
+        if not arcpy.Exists(raw_raster):
+            arcpy.AddWarning(f"RAW raster not found: {raw_raster} – skipping.")
+            print(f"⚠ RAW raster not found: {raw_raster} – skipping.")
+            continue
+
+        arcpy.AddMessage(f"Combining for {scen} {year} ...")
+        print(f"▶ Combining for {scen} {year} ...")
+
+        in_rasters = f"{base_1km};{path_raster};{base_10m};{raw_raster}"
+
+        out_raster = Combine(in_rasters)
+        out_raster.save(out_name)
+
+        arcpy.AddMessage(f"✅ Combined raster saved to {out_name}")
+        print(f"✅ Combined raster saved to {out_name}")
+
+arcpy.AddMessage("🎉 All combinations processed.")
+print("🎉 All combinations processed.")
